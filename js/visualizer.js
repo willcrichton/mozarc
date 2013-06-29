@@ -39,6 +39,11 @@ for (var i = 0; i < 10; i++) {
 var group = new Group(arcs);
 
 // dancer from dancer.js
+Dancer.setOptions({
+    flashJS: 'js/soundmanager2.js',
+    flashSWF: 'js/soundmanager2.swf'
+});
+Dancer.adapters.moz = Dancer.adapters.flash;
 var dancer = new Dancer();
 dancer.bind('loaded', function() {
     $('canvas').fadeIn(500);
