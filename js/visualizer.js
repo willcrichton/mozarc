@@ -1,36 +1,70 @@
+// constants for the visualizer
+var options = {
+    baseSpeed: 30,              // multiplier for how fast all arcs go
+    freqMax: 40,                // end of the frequency range to scan 
+    arcs: {                     
+        length: [170, 270],     // arcs will be between [x,y] degrees long
+        width: 5,               
+        num: 10,                // how many arcs will be shown
+        spacing: 30
+    },
+    threshold: 0.4,             // for max-amp-based kick detection
+    localThreshold: 200,        // can't kick if local average isn't high enough AND
+    localDiffThreshold: 150,    // can't kick if diff between current intensity and local average is too small
+    localSamples: 60,           // number of frames to count for localIntensity 
+    decay: 0.02,                // how rapidly the currThreshold decays in max-amp kick detection
+    smallKick: {
+        compare1: 2,            // kick if intensity / localIntensity > this
+        compare2: 1.5,          // or if ratio is > this and
+        intensity: 500,         //    has intensity > this
+        magnitude: -0.1,        // or if magnitude is > this + threshold
+        time: 200,              // wait at least this many milliseconds between kicks
+        kickMul: 3,             // multiply this by the ratio for increase in kick speed
+        kickMax: 15             // increase at most this number
+    },
+    bigKick: {
+        compare: 2.7,           // same as effects as small kick
+        intensity: 700,
+        magnitude: 0.15,
+        time: 1000,
+        kickMul: 2
+    },
+    kickExponent: 0.8,          // kickSpeed value is raised to this power
+    kickCooldown: 6,            // kickSpeed decreases with this multiplier
+    speedInc: {
+        threshold: 300,         // arcs speed up if avgIntensity is at least this
+        divisor: 300,           // increased speed is divided by this
+        exponent: 1.2           // multiplier increases by this exponent
+    },
+};
+
 // Set up splash screen
 $('.selectpicker').selectpicker().change(function(){
     var val = $(this).val();
     $('#container').delay(500).fadeOut(500, function() {
+        // when they select a value, load that into Dancer
         dancer.load({src: val});
     });
 });
 
-// constants for the visualizer
-var options = {
-    center: new Point(view.viewSize.width / 2, view.viewSize.height / 2),
-    baseSpeed: 30,
-    strokeWidth: 5,
-    song: 'stress.mp3'
-};
-
-// create a center
-var circ = new Path.Circle(options.center, 10);
+// create a center at the center of the canvas
+var center = new Point(view.viewSize.width / 2, view.viewSize.height / 2);
+var circ = new Path.Circle(center, 10);
 circ.fillColor = 'white';
 
 // generate list of arcs with random positions/sizes
 var arcs = [];
-for (var i = 0; i < 10; i++) {
-    var from = options.center + [(i + 1) * 30, 0];
-    from = from.rotate(Math.random() * 360, options.center);
-    var angle = Math.random() * 100 + 170;
-    var through = from.rotate(angle/2, options.center);
-    var to = from.rotate(angle, options.center);
+for (var i = 0; i < options.arcs.num; i++) {
+    var from = center + [(i + 1) * options.arcs.spacing, 0];
+    from = from.rotate(Math.random() * 360, center);
+    var angle = options.arcs.length[0] + Math.random() * (options.arcs.length[1] - options.arcs.length[0]);
+    var through = from.rotate(angle/2, center);
+    var to = from.rotate(angle, center);
     var arc = new Path.Arc(from, through, to);
     arc.strokeColor = new Color(Math.random(), Math.random(), Math.random());
     arc.toColor     = arc.strokeColor; 
     arc.clockwise   = i % 2;
-    arc.strokeWidth = options.strokeWidth;
+    arc.strokeWidth = options.arcs.width;
     arc.speedMult   = 0.8 + (Math.random() / 2);
     arcs.push(arc);
 }
@@ -39,22 +73,27 @@ for (var i = 0; i < 10; i++) {
 var group = new Group(arcs);
 
 // dancer from dancer.js
+// set up flash support for non-Chrome browsers
 Dancer.setOptions({
     flashJS: 'js/soundmanager2.js',
     flashSWF: 'js/soundmanager2.swf'
 });
+// firefox adapter doesn't work nowadays
 Dancer.adapters.moz = Dancer.adapters.flash;
+
+// create a new dancer
 var dancer = new Dancer();
+// once a song is loaded, play it
 dancer.bind('loaded', function() {
     $('canvas').fadeIn(500);
     this.play();
 });
-var kick = dancer.createKick({frequency: [0, 40]});
+var kick = dancer.createKick({frequency: [0, options.freqMax]});
 
 // move the whole system by the vector input
 function transform(vec) {
     group.position += vec;
-    options.center += vec;
+    center += vec;
     circ.position += vec;
 }
 
@@ -90,7 +129,6 @@ avgIntensity   = 1,      // weighted average intensity of the song
 localIntensity = [],     // average intensity of last 100 frames
 kickSpeed      = 1,      // when we hear a beat, increase kickSpeed
 lastKick       = time(),
-threshold      = 0.4,    // threshold for max amplitude beat check
 currThreshold  = 0;      // second threshold for max amp check 
 
 function onFrame(event) {
@@ -100,11 +138,11 @@ function onFrame(event) {
     }
 
     // calculate intensity
-    var intensity = Math.round(dancer.getFrequency(0, 20) * 10000);
+    var intensity = Math.round(dancer.getFrequency(0, options.freqMax) * 10000);
     avgIntensity = intensity * 0.05 + avgIntensity * 0.95;
     localIntensity.push(intensity);
 
-    if (localIntensity.length > 100) {
+    if (localIntensity.length > options.localSamples) {
 
         localIntensity.shift();
 
@@ -115,36 +153,41 @@ function onFrame(event) {
         magnitude            = kick.maxAmplitude(kick.frequency);  // get highest amplitude of frequency spectrum
 
         // sufficient conditions for finding a beat:
-        // 1. intensity is twice the local average OR
-        // 2. intensity is 1.5 the local average, itensity is > 500, and high amplitude is close to threshold OR
+        // 1. intensity is X the local average OR
+        // 2. intensity is Y the local average, itensity is > Z, and high amplitude is close to threshold OR
         // 3. amplitude is above threshold and a decaying higher threshold
-        var kickEnough = (comparativeIntensity > 2) ||
-            (comparativeIntensity > 1.5 && intensity > 500 && (magnitude > threshold - 0.1)) ||
-            (magnitude > currThreshold && magnitude > threshold);
+        var kickEnough = (comparativeIntensity > options.smallKick.compare1) ||
+            (comparativeIntensity > options.smallKick.compare2 && intensity > options.smallKick.intensity && 
+             (magnitude > options.threshold - options.smallKick.magnitude)
+            ) || (magnitude > currThreshold && magnitude > options.threshold);
 
         // also check that we're not spamming kicks and the song is loud enough
-        if ((curTime - lastKick > 200) && kickEnough &&
-            (localAvg > 200 || (intensity - localAvg > 150) || (magnitude > threshold - 0.1)))
+        if ((curTime - lastKick > options.smallKick.time) && kickEnough &&
+            (localAvg > options.localThreshold || 
+             (intensity - localAvg > options.localDiffThreshold) || 
+             (magnitude > options.threshold - options.smallKick.magnitude)))
         {
             // reset currThreshold (it decays over time)
             currThreshold = magnitude;
             // add to the kickSpeed (increases speed of rings)
-            kickSpeed += 3 * Math.max(comparativeIntensity, 5);
+            kickSpeed += Math.max(options.smallKick.kickMul * comparativeIntensity, options.smallKick.kickMax);
 
             // conditions for a bigger beat (closer to, say, a drop)
-            // 1. intensity is 2.7 the local average
-            // 2. magnitude is over 0.15 + threshold
-            // 3. intensity is greater than 700
+            // 1. intensity is X the local average
+            // 2. magnitude is over Y + threshold
+            // 3. intensity is greater than Z
             // also we do these less frequently than small kicks
-            if ((comparativeIntensity > 2.7 || magnitude > threshold + 0.15 || intensity > 700) &&
-                curTime - lastKick > 1000)
+            if ((comparativeIntensity > options.bigKick.intensity || 
+                 magnitude > options.threshold + options.bigKick.magnitude || 
+                 intensity > options.bigKick.intensity) &&
+                curTime - lastKick > options.bigKick.time)
             {
                 // change color of arcs
-                arcs.forEach(function(child) {
-                    child.toColor = new Color(Math.random(), Math.random(), Math.random());
+                arcs.forEach(function(arc) {
+                    arc.toColor = new Color(Math.random(), Math.random(), Math.random());
                 });
                 // make arcs spin even faster
-                kickSpeed += 10;
+                kickSpeed *= options.bigKick.kickMul;
             }
             
             // update lastKick
@@ -152,7 +195,7 @@ function onFrame(event) {
         }
 
         // decay the max amplitude threshold
-        currThreshold -= 0.01;
+        currThreshold -= options.decay;
     } 
 
     // apply effects to arcs
@@ -161,20 +204,20 @@ function onFrame(event) {
         var speed = event.delta * options.baseSpeed * arc.speedMult;
         
         // add speed from kicks (toned down a wee bit)
-        speed *= Math.pow(kickSpeed, 0.8);
+        speed *= Math.pow(kickSpeed, options.kickExponent);
 
         // increase speed as average intensity rises 
-        speed *= avgIntensity > 300 ? Math.max(1, Math.pow(avgIntensity / 300, 1.3)) : 1;
+        speed *= avgIntensity > options.speedInc.threshold ? Math.max(1, Math.pow(avgIntensity / options.speedInc.divisor, options.speedInc.exponent)) : 1;
         
         // perform the rotation at given speed
         if (!arc.clockwise) {
             speed = 360 - speed;
         }
-        arc.rotate(speed, options.center);
+        arc.rotate(speed, center);
         
         // reduce kickSpeed
         if (kickSpeed > 1) {
-            kickSpeed -= event.delta * 6;
+            kickSpeed -= event.delta * options.kickCooldown;
         }
 
         // if child color was changed on a big beat, interpolate to it
