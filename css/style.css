@@ -31,5 +31,20 @@ h1 {
 
 p {
     font-size: 24px;
+}
 
+form {
+    margin-top: 10px;
+}
+
+input[type=file] {
+    line-height: 0;
+}
+
+#fft {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    height: 100px;
+    border: 1px solid #333;
 }

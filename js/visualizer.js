@@ -1,8 +1,8 @@
 // constants for the visualizer
 var options = {
-    debug: true,
+    debug: false,
     baseSpeed: 30,              // multiplier for how fast all arcs go
-    freqMax: 200,                // end of the frequency range to scan 
+    freqMax: 20,                // end of the frequency range to scan 
     arcs: {                     
         length: [170, 270],     // arcs will be between [x,y] degrees long
         width: 5,               
@@ -20,22 +20,26 @@ var options = {
         intensity: 500,         //    has intensity > this
         magnitude: -0.1,        // or if magnitude is > this + threshold
         time: 200,              // wait at least this many milliseconds between kicks
+        stdDevMax: 80,          // apply standard dev test if s < this
+        deviations: 1.7,        // kick if intensity is > this many deviations from mean
         kickMul: 2,             // multiply this by the ratio for increase in kick speed
         kickMax: 10             // increase at most this number
     },
     bigKick: {
-        compare: 2.7,           // same as effects as small kick
+        compare1: 2.7,           // same as effects as small kick
         intensity: 700,
         magnitude: 0.25,
         time: 1000,
-        kickMul: 1.5
+        stdDevMax: 80,
+        deviations: 2.2,
+        kickMul: 1.2
     },
-    kickExponent: 1,          // kickSpeed value is raised to this power
-    kickCooldown: 2,           // rate at which kick decreases (smaller is faster)
+    kickExponent: 0.8,          // kickSpeed value is raised to this power
+    kickCooldown: 1.8,           // rate at which kick decreases (smaller is faster)
     speedInc: {
-        threshold: 200,         // arcs speed up if avgIntensity is at least this
-        divisor: 200,           // increased speed is divided by this
-        exponent: 2           // multiplier increases by this exponent
+        threshold: 100,         // arcs speed up if avgIntensity is at least this
+        divisor: 150,           // increased speed is divided by this
+        exponent: 1.6           // multiplier increases by this exponent
     },
 };
 
@@ -56,8 +60,12 @@ $('.selectpicker').selectpicker().change(function(){
     });
 });
 
+$('input[type=file]').change(function(){
+    $('form').submit();
+});
+
 if (options.debug) {
-    $('.selectpicker').selectpicker('val', 'callmemaybe.mp3');
+    $('.selectpicker').selectpicker('val', 'derezzed.mp3');
 }
 
 // create a center at the center of the canvas
@@ -102,6 +110,15 @@ dancer.bind('loaded', function() {
     log("Loaded, now playing");
     this.play();
 });
+if (options.debug) {
+    var div = $('<canvas id="fft"></div>');
+    $('body').append(div);
+    dancer.fft(document.getElementById('fft'));
+}
+if (_toLoad) {
+    console.log(_toLoad);
+    dancer.load({src: _toLoad});
+}
 var kick = dancer.createKick({frequency: [0, options.freqMax]});
 
 // move the whole system by the vector input
@@ -183,19 +200,19 @@ Kicker.prototype =  {
             (comparativeIntensity > this.compare2 && intensity > this.intensity && 
              (magnitude > this.threshold - this.magnitude)
             ) || (magnitude > this.magThreshold && magnitude > this.threshold) ||
-            (s < 80 && deviations > 1.7);
+            (s < this.stdDevMax && deviations > this.deviations);
 
         // also check that we're not spamming kicks and the song is loud enough
         if ((curTime - this.lastKick > this.time) && kickEnough &&
             (localAvg > options.localThreshold || 
              (intensity - localAvg > options.localDiffThreshold) || 
              (magnitude > this.threshold - this.magnitude) ||
-            s < 80))
+             s < this.stdDevMax && localAvg > options.localThreshold - 100))
         {
             // reset currThreshold (it decays over time)
             this.magThreshold = magnitude;
             this.lastKick = curTime;
-            this.onKick(comparativeIntensity, magnitude);
+            this.onKick(comparativeIntensity, magnitude, deviations);
             kicked = true;
         }
 
@@ -211,15 +228,16 @@ localIntensity = [],     // average intensity of last 100 frames
 kickSpeed      = 1;      // when we hear a beat, increase kickSpeed
 
 new Kicker($.extend(options.smallKick, {
-    onKick: function(comparativeIntensity, magnitude) {
-        console.log('small kick');
+    onKick: function(comparativeIntensity, magnitude, deviations) {
+        console.log('small kick', comparativeIntensity, magnitude, deviations);
         // add to the kickSpeed (increases speed of rings)
         kickSpeed += Math.max(options.smallKick.kickMul * comparativeIntensity, options.smallKick.kickMax);
     }
 }));
 
 new Kicker($.extend(options.bigKick, {
-    onKick: function(args) {
+    onKick: function(comparativeIntensity, magnitude, deviations) {
+        //console.log('big kick', getIntensity() - average(localIntensity), comparativeIntensity, magnitude, deviations);
         arcs.forEach(function(arc) {
             arc.toColor = new Color(Math.random(), Math.random(), Math.random());
         });
@@ -227,6 +245,19 @@ new Kicker($.extend(options.bigKick, {
         kickSpeed *= options.bigKick.kickMul;
     }
 }));
+
+new Kicker({
+    compare1: 8,
+    compare2: 6,
+    intensity: 1000,
+    magnitude: 0.5,
+    time: 1000,
+    stdDevMax: 1000,
+    deviations: 4.5,
+    onKick: function(comparativeIntensity, magnitude, deviations){
+        kickSpeed *= 30;
+    }
+});
 
 function onFrame(event) {
 
